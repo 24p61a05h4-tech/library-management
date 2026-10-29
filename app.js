@@ -1,0 +1,1 @@
+document.addEventListener('submit',function(e){const form=e.target;if(form.matches('[data-confirm]')&&!confirm(form.getAttribute('data-confirm')||'Are you sure?'))e.preventDefault();});

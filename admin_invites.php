@@ -1,0 +1,23 @@
+<?php
+require 'db.php'; require 'auth.php'; require_admin();
+$error=''; $newCode='';
+if($_SERVER['REQUEST_METHOD']==='POST') {
+ check_csrf(); $action=$_POST['action']??'';
+ if($action==='create') {
+   try {
+    // 32 random bytes gives a 256-bit one-time secret. Only its hash is persisted.
+    $newCode=bin2hex(random_bytes(16)); $hash=hash('sha256',$newCode);
+    $expires=(new DateTimeImmutable('+7 days'))->format('Y-m-d H:i:s');
+    $st=$pdo->prepare('INSERT INTO admin_invites(code_hash,created_by,created_by_username,expires_at) VALUES(?,?,?,?)');
+    $st->execute([ $hash, (int)$_SESSION['user_id'], (string)$_SESSION['admin_username'], $expires ]);
+   } catch(Throwable $e) { $newCode=''; $error='Could not create invitation. Confirm admin_invites table exists by importing database.sql.'; }
+ } elseif($action==='revoke') {
+   $id=(int)($_POST['invite_id']??0); $st=$pdo->prepare('UPDATE admin_invites SET used_at=NOW() WHERE id=? AND used_at IS NULL AND expires_at>NOW()'); $st->execute([$id]);
+ }
+}
+$st=$pdo->query('SELECT id,created_by_username,expires_at,used_at,created_at FROM admin_invites ORDER BY id DESC LIMIT 50'); $invites=$st->fetchAll();
+?><!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Faculty invitations · LibraryDesk</title><link rel="stylesheet" href="style.css"></head><body><div class="layout"><aside class="sidebar"><a class="brand" href="index.php"><span class="brand-mark">📚</span>LibraryDesk</a><p class="side-label">ADMIN TOOLS</p><nav class="nav"><a href="index.php">▦ &nbsp; Dashboard</a><a class="active" href="admin_invites.php">♙ &nbsp; Faculty invites</a><a href="logout.php">↪ &nbsp; Sign out</a></nav><div class="side-bottom">ONE-TIME FACULTY INVITATIONS</div></aside><main class="main"><header class="topbar"><div><div class="crumb">Admin tools / Access</div><h1>Faculty invitations</h1></div><div class="user-chip"><span class="avatar"><?=h(strtoupper(substr($_SESSION['admin_username'],0,1)))?></span><span><strong><?=h($_SESSION['admin_username'])?></strong><small>Administrator</small></span><a class="logout" href="logout.php">Logout</a></div></header><section class="welcome"><div><p class="eyebrow">SECURE ACCESS</p><h2>Invite another faculty member.</h2><p>Create a single-use invitation that expires in seven days. The code is shown only once, so copy it and send it privately.</p></div><div class="welcome-art">🔐</div></section>
+<?php if($error):?><div class="error"><?=h($error)?></div><?php endif;?>
+<?php if($newCode!==''):?><section class="panel"><h3>Copy this invitation now</h3><p class="muted">This code will not be shown again. It expires in seven days and can be used by one new admin only.</p><div class="inline-form"><input id="invite-code" readonly value="<?=h($newCode)?>"><button class="btn" type="button" onclick="navigator.clipboard.writeText(document.getElementById('invite-code').value).then(()=>this.textContent='Copied!')">Copy code</button></div></section><?php endif;?>
+<section class="panel"><div class="panel-head"><div><h3>Generate an invitation</h3><p>Each invitation can create one admin account in this project only.</p></div></div><form method="post"><input type="hidden" name="csrf_token" value="<?=h(csrf_token())?>"><input type="hidden" name="action" value="create"><button class="btn">＋ Generate one-time invite</button></form></section>
+<section class="panel"><div class="panel-head"><div><h3>Recent invitations</h3><p>Codes are stored as hashes, not readable secrets.</p></div></div><div class="table-wrap"><table><thead><tr><th>Created by</th><th>Created</th><th>Expires</th><th>Status</th><th>Action</th></tr></thead><tbody><?php foreach($invites as $i): $status=$i['used_at']?'Used / revoked':(strtotime($i['expires_at'])<time()?'Expired':'Available');?><tr><td><?=h($i['created_by_username'])?></td><td><?=h($i['created_at'])?></td><td><?=h($i['expires_at'])?></td><td><span class="pill <?=$status==='Available'?'good':'warn'?>"><?=h($status)?></span></td><td><?php if($status==='Available'):?><form method="post"><input type="hidden" name="csrf_token" value="<?=h(csrf_token())?>"><input type="hidden" name="action" value="revoke"><input type="hidden" name="invite_id" value="<?=(int)$i['id']?>"><button class="btn danger small">Revoke</button></form><?php else:?>—<?php endif;?></td></tr><?php endforeach;?><?php if(!$invites):?><tr><td colspan="5" class="empty">No invitations generated yet.</td></tr><?php endif;?></tbody></table></div></section><footer class="footer">LibraryDesk · Faculty access management</footer></main></div></body></html>
